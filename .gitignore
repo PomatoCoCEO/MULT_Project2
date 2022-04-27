@@ -7,8 +7,9 @@ __pycache__/
 *.so
 
 # project-specific folders to avoid
-dataset/allSongs
+dataset/
 Queries/
+*.csv
 
 # Distribution / packaging
 .Python

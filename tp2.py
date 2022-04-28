@@ -41,14 +41,9 @@ def features_librosa(dirname:str) -> np.ndarray:
     for filename in os.listdir(dirname):
         print(filename)
         i+=1
-        print(i)
         # spectral features
         y,fs = librosa.load(dirname+'/'+filename, sr = SR, mono = MONO)
         mfccs = librosa.feature.mfcc(y, sr=SR, n_mfcc=13)
-        # print('Shape of mfccs: ', mfccs.shape)
-        # mfccs_stats = np.zeros((mfccs.shape[0], 7))  # 7 metrics
-        # mfccs_stats[np.arange(mfccs.shape[0])] = calculate_stats(mfccs[np.arange(mfccs.shape[0])]) 
-        # mfccs_stats = np.array([calculate_stats(c) for c in mfccs])
         spcentroid = librosa.feature.spectral_centroid(y, sr=SR)
         spband = librosa.feature.spectral_bandwidth(y, sr=SR)
         spcontrast = librosa.feature.spectral_contrast(y, sr=SR)
@@ -57,24 +52,20 @@ def features_librosa(dirname:str) -> np.ndarray:
         rms = librosa.feature.rms(y)
         zcr = librosa.feature.zero_crossing_rate(y)
         f0 = librosa.yin(y, sr=SR, fmin=20, fmax=11025)
-        print( "f0 shape ",f0.shape)
         f0[f0==11025]=0
         all_features_array = np.vstack((mfccs, spcentroid, spband, spcontrast, spflatness, sprolloff, f0, rms, zcr))
-        print( "all shape ",all_features_array.shape)
         all_stats = np.apply_along_axis(calculate_stats, 1, all_features_array).flatten()
-        print( "all shape 2 ",all_stats.shape)
 
 
         tempo = librosa.beat.tempo(y,sr=SR)
         aid = np.append(all_stats, tempo)
-        print(aid)
-        print("shape aid ", aid.shape)
+        # print(aid)
         if i==1:
             ans = np.array(aid)
         else:
             ans= np.vstack((ans,aid))
-    print("ans: ",ans)
-    print("ans shape: ",ans.shape)
+    # print("ans: ",ans)
+    # print("ans shape: ",ans.shape)
     ans = np.array(ans)
     return normalize_features(ans)
 
@@ -82,7 +73,7 @@ def save_normalized_features() -> np.ndarray:
     data = import_csv("dataset/top100_features.csv")
     n_data = normalize_features(data)
     print(n_data)
-    print('shape: ', n_data.shape)
+    # print('shape: ', n_data.shape)
     export_csv('dataset/normalized_features.csv', n_data)
     return n_data
 
@@ -100,6 +91,7 @@ def cosine_distance (vec1:np.ndarray, vec2:np.ndarray) -> float:
 def distance_matrix(feature_matrix:np.ndarray, distance_function, filename:str):
     lines= len(feature_matrix)
     distance_mat =  np.zeros((lines,lines))
+
     # distance_mat[np.arange(lines), np.arange(lines)] = distance_function(feature_matrix[np.arange(lines)], feature_matrix[np.arange(lines)])  
     feature_matrix[feature_matrix!=feature_matrix] = 0
     
@@ -108,13 +100,12 @@ def distance_matrix(feature_matrix:np.ndarray, distance_function, filename:str):
             distance_mat[i,j] = distance_function(feature_matrix[i], feature_matrix[j])
             distance_mat[j,i] = distance_mat[i,j]
     export_csv(filename, distance_mat)
-    print(distance_mat.shape)
     return distance_mat
 
 def get_distance_matrices():
-    song_features = np.genfromtxt('dataset/song_features.csv', skip_header = 1, delimiter=',')
-    top100 = np.genfromtxt('dataset/normalized_features.csv', skip_header = 1, delimiter=',')
-
+    song_features = np.genfromtxt('dataset/song_features.csv', skip_header = 0, delimiter=',') 
+    # the skip header must be set to zero!!!
+    top100 = np.genfromtxt('dataset/normalized_features.csv', skip_header = 0, delimiter=',')
     d_functions = [euclidean_distance, manhattan_distance, cosine_distance]
     function_names=['euclidean','manhattan', 'cosine']
     matrices = [top100, song_features]
@@ -137,6 +128,7 @@ def get_query_ranking(filename, index, distance_matrices, all_songs):
         line=distance_matrices[i,index]
         sorted_distances = np.argsort(line)
         indices = sorted_distances[1:21]
+        print("According to metric ",i)
         for j in indices:
             print(all_songs[j])
         print("------")
@@ -146,18 +138,16 @@ def get_rankings(distance_matrices):
     queries = os.listdir('Queries')
     for q in queries:
         index = all_songs.index(q)
-        print(index)
         get_query_ranking ( q,index, distance_matrices, all_songs)
 
 def read_distance_mats():
 
     arr = np.zeros((NUM_MAT, N_SONGS, N_SONGS ))
 
-    filenames = ['euclidean_song_features','euclidean_top100','manhattan_song_features','manhattan_top100','cosine_song_feature','cosine_top100',]
+    filenames = ['euclidean_song_features','euclidean_top100','manhattan_song_features','manhattan_top100','cosine_song_features','cosine_top100',]
 
     for i in range(len(filenames)):
         gen =  np.genfromtxt('dataset/results/'+filenames[i]+'.csv', skip_header = 0, delimiter=',')
-        print("gen shape: ", gen.shape)
         arr[i] = gen
     return arr
 
@@ -169,9 +159,6 @@ def main() -> None:
     # features_norm_obtained = features_librosa('dataset/allSongs')
 
     # export_csv('dataset/song_features.csv', features_norm_obtained)
-
-    distance_matrices = get_distance_matrices()
-    
     distance_matrices = read_distance_mats()
     get_rankings(distance_matrices)
 

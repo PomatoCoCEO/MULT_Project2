@@ -1,3 +1,4 @@
+from http.client import FORBIDDEN
 import numpy as np
 import os
 import warnings
@@ -21,8 +22,8 @@ def normalize_features(matrix: np.ndarray) -> np.ndarray:
     ans[np.arange(len(matrix)),:] = (ans[np.arange(len(matrix)),: ] - mins)/(maxs-mins)
     return ans
 
-def export_csv(filename:str,  array:np.ndarray) -> None:
-    np.savetxt(filename, array, delimiter =',')
+def export_csv(filename:str,  array:np.ndarray, fmt='%.18e') -> None:
+    np.savetxt(filename, array, delimiter =',', fmt=fmt)
 
 def calculate_stats(array:np.ndarray):
     mean= np.mean(array)
@@ -122,25 +123,73 @@ def get_distance_matrices():
     # arr = np.array(arr)
     return arr
 
-def get_query_ranking(filename, index, distance_matrices, all_songs):
+def get_query_ranking(filename, index, distance_matrices, all_songs)-> np.ndarray:
     print( "Music: ", filename)
+    ans = []
     for i in range(len(distance_matrices)):
         line=distance_matrices[i,index]
         sorted_distances = np.argsort(line)
         indices = sorted_distances[1:21]
+        ans.append(indices)
         print("According to metric ",i)
         for j in indices:
             print(all_songs[j])
         print("------")
+    ans = np.array(ans)
+    return ans
 
-def get_rankings(distance_matrices):
-    all_songs= os.listdir('dataset/allSongs')
-    queries = os.listdir('Queries')
+def score_distance(md1:np.ndarray, md2:np.ndarray)->int:
+    ans=0
+    inds = [1,3]
+    sps = [9,11]
+    for i in inds:
+        if md1[i] == md2[i]:
+            ans +=1
+    for s in sps:
+        # print("s = ",s, " and md1[s] = ", md1[s], " and md2[s] =",md2[s] )
+        sp1:list = md1[s].split("; ")
+        sp2:list = md2[s].split("; ")
+        print("sp1 len is ", len(sp1), "and len sp2 is", len(sp2))
+        for str_prop in sp1:
+            if str_prop in sp2:
+                ans +=1
+    return ans    
+
+def get_metadata_ranking(filename:str, index:int, all_songs:list, metadata_matrix:np.ndarray)->np.ndarray:
+    print("Music: ", filename)
+    md_file = metadata_matrix[index]
+    rating = np.zeros((len(all_songs)))
+    for i in range(len(all_songs)):
+        md_i = metadata_matrix[i]
+        rating[i] = score_distance(md_i, md_file)
+        print("Score: ",rating[i])
+    sorted_dists = np.argsort(rating)
+    sorted_dists = np.flip(sorted_dists)
+    reccoms = sorted_dists[1:21] # the first 20 songs that are supposed to be considered for the ranking
+    return reccoms
+
+def get_all_metadata_rankings(all_songs: list, metadata_matrix: np.ndarray, queries:list)->np.ndarray:
+    a:list =[]
+    for q in queries:
+        index:int  = all_songs.index(q)
+        a.append(get_metadata_ranking(q,index, all_songs, metadata_matrix))
+    a = np.array(a)
+    return a
+
+
+def get_rankings(distance_matrices, all_songs, queries)->np.ndarray:
+    rks=[]
     for q in queries:
         index = all_songs.index(q)
-        get_query_ranking ( q,index, distance_matrices, all_songs)
+        rks.append(get_query_ranking ( q,index, distance_matrices, all_songs))
+    rks = np.array(rks)
+    a,b,c = rks.shape
+    ans = np.zeros((b,a,c))
+    for i in range(b):
+        ans[i] = rks[:,i,:]
+    return ans 
 
-def read_distance_mats():
+def read_distance_mats()->np.ndarray:
 
     arr = np.zeros((NUM_MAT, N_SONGS, N_SONGS ))
 
@@ -151,6 +200,17 @@ def read_distance_mats():
         arr[i] = gen
     return arr
 
+def print_rankings(ranking_matrix:np.ndarray, all_songs:list, queries:list)->None:
+    for i in range(len(queries)):
+        q = queries[i]
+        print("Recommendation for music", q, ":")
+        for r in ranking_matrix[i]:
+            print(all_songs[r])
+        print("--------")
+
+def save_feature_ranks(all_ranks:np.ndarray):
+    for i in range(len(all_ranks)):
+        export_csv(f"dataset/results/ranking_features_metric_{i}.csv", all_ranks[i], fmt="%d")
 
 
 def main() -> None:
@@ -160,7 +220,14 @@ def main() -> None:
 
     # export_csv('dataset/song_features.csv', features_norm_obtained)
     distance_matrices = read_distance_mats()
-    get_rankings(distance_matrices)
+    all_songs= os.listdir('dataset/allSongs')
+    queries = os.listdir('Queries')
+    all_feature_ranks = get_rankings(distance_matrices, all_songs, queries)
+    save_feature_ranks(all_feature_ranks)
+    metadata_matrix = np.genfromtxt('dataset/panda_dataset_taffc_metadata.csv', delimiter=',',skip_header = 1, encoding = None, dtype=None)
+    metadata_rankings = get_all_metadata_rankings(all_songs, metadata_matrix, queries)
+    print_rankings(metadata_rankings, all_songs, queries)
+    export_csv("dataset/results/metadata_ratings.csv", metadata_rankings, fmt="%d")
 
 
 if __name__ == "__main__":

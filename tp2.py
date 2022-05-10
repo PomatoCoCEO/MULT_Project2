@@ -3,6 +3,8 @@ import os
 import warnings
 import librosa
 import scipy
+from scipy.fft import fft
+from scipy.fftpack import dct
 
 SR = 22050
 MONO = True
@@ -36,6 +38,57 @@ def calculate_stats(array:np.ndarray):
 
     return np.array([mean,std,skewness, kurtosis,median, maximum, minimum])
 
+def mfccs(sample: np.ndarray, sr:int, n_mfccs:int=13, frame_length= 2048, hop_length=512):
+    sample_size= len(sample)
+    n_windows = (sample_size)// hop_length + 1
+    begs= np.arange(n_windows)*hop_length - frame_length//2
+    begs[begs<0]=0
+    ends= np.arange(n_windows)*hop_length + frame_length//2
+    ends[ends>sample_size]= sample_size
+
+    delta_f = sr / frame_length
+    arr_mfccs = []
+    f_max: float = sr/2
+    mel_max: float = hertz_to_mel(f_max)
+    window_centers = (np.arange(1,41)/41) * mel_max
+    window_centers = mel_to_hertz(window_centers)
+
+    for i in range(len(begs)):
+        sample_to_dft: np.ndarray = sample[begs[i]:ends[i]] * np.hanning(ends[i]-begs[i])
+        dft_sample = fft(sample_to_dft)
+        dft_magnitude = np.abs(dft_sample)[:len(dft_sample)//2+1] # dft coefficients from 0 to 1024 * delta_f
+        log_fccs = []
+        for j in range(40):
+            inf_freq:float = 0
+            sup_freq:float = f_max
+            mid_freq = window_centers[j]
+            if j!=0:
+                inf_freq = window_centers[j-1]
+            if j<39:     
+                sup_freq = window_centers[j+1]
+            pos_inf_freq = int(np.ceil(inf_freq / delta_f))
+            pos_sup_freq = int(np.floor(sup_freq / delta_f))
+            total_cc = 0
+            for k in range(pos_inf_freq, min(len(dft_magnitude),pos_sup_freq+1)):
+                freq_k = k*delta_f
+                coef:float = 0
+                if freq_k < mid_freq:
+                    perc = (freq_k -inf_freq)/(mid_freq-inf_freq)
+                    coef = perc
+                else:
+                    perc = (freq_k - mid_freq)/(sup_freq-mid_freq)
+                    coef = 1-perc
+                total_cc += coef * dft_magnitude[k]
+            log_total_cc = np.log10(total_cc)
+            log_fccs.append(log_total_cc)
+        log_fccs = np.array(log_fccs)
+        dft_coefs = dct(log_fccs)[:n_mfccs]
+        arr_mfccs.append(dft_coefs)
+    ret = np.array(arr_mfccs).T
+    print("ret shape: ",ret.shape)
+    # 961413169
+    return ret
+
 def features_librosa(dirname:str) -> np.ndarray:    
     ans=np.array([])
     i=0
@@ -44,7 +97,7 @@ def features_librosa(dirname:str) -> np.ndarray:
         i+=1
         # spectral features
         y,fs = librosa.load(dirname+'/'+filename, sr = SR, mono = MONO)
-        mfccs = librosa.feature.mfcc(y, sr=SR, n_mfcc=13)
+        mfccs_file = mfccs(y, SR)# librosa.feature.mfcc(y, sr=SR, n_mfcc=13)
         spcentroid = librosa.feature.spectral_centroid(y, sr=SR)
         spband = librosa.feature.spectral_bandwidth(y, sr=SR)
         spcontrast = librosa.feature.spectral_contrast(y, sr=SR)
@@ -54,7 +107,7 @@ def features_librosa(dirname:str) -> np.ndarray:
         zcr = librosa.feature.zero_crossing_rate(y)
         f0 = librosa.yin(y, sr=SR, fmin=20, fmax=11025)
         f0[f0==11025]=0
-        all_features_array = np.vstack((mfccs, spcentroid, spband, spcontrast, spflatness, sprolloff, f0, rms, zcr))
+        all_features_array = np.vstack((mfccs_file, spcentroid, spband, spcontrast, spflatness, sprolloff, f0, rms, zcr))
         all_stats = np.apply_along_axis(calculate_stats, 1, all_features_array).flatten()
 
 
@@ -204,11 +257,9 @@ def read_distance_mats()->np.ndarray:
         arr[i] = gen
     return arr
 
-
 def print_rankings_matrices(ranking_matrix:np.ndarray, all_songs:list, queries:list) -> None :
     for mat in ranking_matrix:
         print_rankings(mat, all_songs, queries)
-
 
 def print_rankings(ranking_matrix:np.ndarray, all_songs:list, queries:list)->None:
     for i in range(len(queries)):
@@ -222,23 +273,31 @@ def save_feature_ranks(all_ranks:np.ndarray):
     for i in range(len(all_ranks)):
         export_csv(f"dataset/results/ranking_features_metric_{i}.csv", all_ranks[i], fmt="%d")
 
+def hertz_to_mel(hertz:float)-> float:
+    return 2595 * np.log10(1+hertz/700)
+
+def mel_to_hertz(mel:float) -> float:
+    return 700 * (np.power(10, mel/2595)-1)
+# now for the implementation of MFCCs
+
+
 
 def main() -> None:
     warnings.filterwarnings("ignore")
     # save_normalized_features()
-    # features_norm_obtained = features_librosa('dataset/allSongs')
+    features_norm_obtained = features_librosa('dataset/allSongs')
 
     # export_csv('dataset/song_features.csv', features_norm_obtained)
-    distance_matrices = read_distance_mats() # reads distance matrices, already obtained
-    all_songs= os.listdir('dataset/allSongs')
-    queries = os.listdir('Queries')
+    # distance_matrices = read_distance_mats() # reads distance matrices, already obtained
+    # all_songs= os.listdir('dataset/allSongs')
+    # queries = os.listdir('Queries')
 
-    all_feature_ranks = get_rankings(distance_matrices, all_songs, queries) # this gets all rankings
-    save_feature_ranks(all_feature_ranks) # the rankings are now saved in the disk
-    metadata_matrix = np.genfromtxt('dataset/panda_dataset_taffc_metadata.csv', delimiter=',',skip_header = 1, encoding = None, dtype=None)
-    metadata_rankings = get_all_metadata_rankings(all_songs, metadata_matrix, queries) # getting rankings based on metadata
-    metadata_rankings = metadata_rankings[np.newaxis, :,:]
-    all_rankings = np.vstack((metadata_rankings, all_feature_ranks)).astype(np.int32)
+    # all_feature_ranks = get_rankings(distance_matrices, all_songs, queries) # this gets all rankings
+    # save_feature_ranks(all_feature_ranks) # the rankings are now saved in the disk
+    # metadata_matrix = np.genfromtxt('dataset/panda_dataset_taffc_metadata.csv', delimiter=',',skip_header = 1, encoding = None, dtype=None)
+    # metadata_rankings = get_all_metadata_rankings(all_songs, metadata_matrix, queries) # getting rankings based on metadata
+    # metadata_rankings = metadata_rankings[np.newaxis, :,:]
+    # all_rankings = np.vstack((metadata_rankings, all_feature_ranks)).astype(np.int32)
     print_rankings_matrices(all_rankings, all_songs, queries)
     # print_rankings(all_feature_ranks, all_songs, queries)
     print("Shapes:",all_feature_ranks.shape, "and ", metadata_rankings.shape)
